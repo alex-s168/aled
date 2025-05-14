@@ -91,11 +91,16 @@ class Buffer:
 # one-indexed
 class Range:
     def __init__(self, first, last, buf):
+        first = int(first)
+        last = int(last)
+        if first < 0:
+            first = 1
+        if last < 0:
+            last = 1
+
         bufptr = buffers[buf]
-        if not isinstance(first, Marker):
-            first = bufptr.marker(first)
-        if not isinstance(last, Marker):
-            last = bufptr.marker(last)
+        first = bufptr.marker(first)
+        last = bufptr.marker(last)
         if int(last) < int(first):
             last, first = first, last
         self.first = first
@@ -169,9 +174,9 @@ def take_int(s: str):
 def parse_range(r: str):
     global selection
     first, r = take_int(r)
-    last = selection.last
+    last = int(selection.last)
     if len(first) == 0:
-        first = selection.first
+        first = int(selection.first)
     else:
         first = int(first)
         last = first
