@@ -1,0 +1,6 @@
+: seperates columns in printed tables
+cfg tablesep= $
+: should output newline after every command if something was printed
+cfg endline=yes$
+: printed as command prompt
+cfg echo=  $
