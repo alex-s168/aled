@@ -118,7 +118,7 @@ class Range:
     def __str__(self):
         if self.first.line is None or self.last.line is None:
             return "invalid"
-        return f"{int(self.first)} - {int(self.last)} @ {self.buf}"
+        return f"{int(self.first)}-{int(self.last)}@{self.buf}"
 
     def __contains__(self, line):
         line = int(line)
@@ -135,7 +135,7 @@ class Range:
         for _ in range(num):
             b.delete(idx)
 
-def table(aligns,itr):
+def table(aligns, itr, out):
     widths = []
     values = []
     for row in itr:
@@ -148,7 +148,7 @@ def table(aligns,itr):
     for row in values:
         for idx,col in enumerate(row):
             if idx != 0:
-                print(config["tablesep"], end="")
+                out(config["tablesep"], end="")
             w = widths[idx]
             a = aligns[idx]
             while len(col) < w:
@@ -156,8 +156,8 @@ def table(aligns,itr):
                     col = col + " "
                 else:
                     col = " " + col
-            print(col, end="")
-        print()
+            out(col, end="")
+        out()
 
 def head(s: str):
     if len(s) == 0:
@@ -173,10 +173,16 @@ def take_int(s: str):
 
 def parse_range(r: str):
     global selection
+
+    r = r.strip()
+    every = head(r) == '*'
+    if every:
+        r = r[1:]
+
     first, r = take_int(r)
-    last = int(selection.last)
+    last = len(buffers[selection.buf].lines) if every else int(selection.last)
     if len(first) == 0:
-        first = int(selection.first)
+        first = 1 if every else int(selection.first)
     else:
         first = int(first)
         last = first
@@ -221,9 +227,16 @@ def select_buf(idx):
 
 last_listed_range = None
 
-def exe(cmd: str, args: str):
+def macro_val_tostr(v):
+    if v is None:
+        return ""
+    return str(v)
+
+def exe(cmd: str, args: str, out=print):
     global selection
     global last_listed_range
+
+    code_val = None
 
     commands = cmd.split(".")
     if len(commands) > 1:
@@ -238,34 +251,42 @@ def exe(cmd: str, args: str):
                       [("id", "path", "#lines")],
                       ((str(idx+1) + ("<" if selection and idx == selection.buf else ""), buf.file_path, len(buf.lines))
                        for idx, buf in enumerate(buffers))
-                  ))
+                  ), out=out)
             odone()
         else:
-            b = buffers[int(args) - 1]
+            selection = select_buf(int(args) - 1)
+            out(selection)
+        code_val = selection.buf
     elif cmd == "cfg":
         if len(args) == 0:
-            table("ll", ((k, "'"+v+"'") for k,v in config.items()))
+            table("ll", ((k, "'"+v+"'") for k,v in config.items()), out=out)
             odone()
         else:
             if args[-1] == '$':
                 args = args[:-1]
-            k,v = args.split("=", 1)
-            k = k.strip()
-            old = config.get(k,None)
-            config[k] = v
-            if old is not None:
-                print("was '" + old + "'")
+            if "=" in args:
+                k,v = args.split("=", 1)
+                k = k.strip()
+                config[k] = v
+            else:
+                val = config.get(args.strip(), None)
+                if val is None:
+                    out("unset")
+                else:
+                    out(f"'{val}'")
+                code_val = val
                 odone()
     elif cmd == "l":
         r = parse_range(args)
         last_listed_range = r
         bf = buffers[r.buf]
         table("rl",
-              ((lnum, bf.highl(l)) for lnum, l in r))
+              ((lnum, bf.highl(l)) for lnum, l in r), out=out)
         odone()
     elif cmd == "s":
+        code_val = selection
         if len(args) == 0:
-            print(str(selection))
+            out(str(selection))
             odone()
         else:
             r = parse_range(args)
@@ -273,11 +294,13 @@ def exe(cmd: str, args: str):
     elif cmd == "sl":
         assert last_listed_range
         selection = last_listed_range
+        code_val = selection
     elif cmd == "sa":
         buf = 0
         if len(args) > 0:
             buf = int(args) - 1
         selection = select_buf(buf)
+        code_val = selection
     elif cmd == "w":
         buffers[selection.buf].save()
     elif cmd == "wa":
@@ -292,39 +315,73 @@ def exe(cmd: str, args: str):
         selection = Range(last + 1,
                           last + num,
                           selection.buf)
-    elif cmd == "p" or cmd == "a" or cmd == "e":
-        old_first = int(selection.first)
-        insert_at = int(selection.first) - 1
-        if cmd == "a":
-            insert_at = int(selection.last)
-        elif cmd == "e":
-            insert_at = int(selection.first) - 1
-            selection.delete()
-        lines = [args]
-        while True:
-            print(config["echo"] + ".", end="")
-            ln = input()
-            if len(ln) == 0:
-                break
-            ln = ln[1:]
-            lines.append(ln)
-        odone()
-        buf = buffers[selection.buf]
-        buf.insert_many(insert_at, lines)
+    elif any(cmd.startswith(x) for x in ["p", "a", "e"]):
+        flags = cmd[1:]
+        cmd = cmd[0:1]
+
+        r = selection
+        if 's' in flags:
+            vli = args.split(" ", 1)
+            r = parse_range(vli[0])
+            args = vli[1] if len(vli) > 1 else ""
+
+        src_range = None
+        if 'b' in flags:
+            vli = args.split(" ", 1)
+            src_range = parse_range(vli[0])
+            args = vli[1] if len(vli) > 1 else ""
+
+        if 'm' in flags:
+            assert 'b' in flags
+
+        old_first = int(r.first)
+        insert_at = None
         if cmd == "p":
-            selection.first = buf.marker(int(selection.first) - len(lines))
+            insert_at = int(r.first) - 1
         elif cmd == "a":
-            selection.last = buf.marker(int(selection.last) + len(lines))
+            insert_at = int(r.last)
         elif cmd == "e":
-            selection.first = buf.marker(old_first)
-            selection.last = buf.marker(old_first + len(lines) - 1)
+            insert_at = int(r.first) - 1
+            r.delete()
+
+        lines = []
+        if src_range is None:
+            lines.append(args)
+            while True:
+                out(config["echo"] + ".", end="")
+                ln = input()
+                if len(ln) == 0:
+                    break
+                ln = ln[1:]
+                lines.append(ln)
+            odone()
+        else:
+            lines = [x for _, x in src_range]
+            if 'm' in flags:
+                src_range.delete()
+
+        buf = buffers[r.buf]
+        buf.insert_many(insert_at, lines)
+        if not 'q' in flags:
+            if cmd == "p":
+                selection.first = buf.marker(int(r.first) - len(lines))
+            elif cmd == "a":
+                selection.last = buf.marker(int(r.last) + len(lines))
+            elif cmd == "e":
+                selection.first = buf.marker(old_first)
+                selection.last = buf.marker(old_first + len(lines) - 1)
     elif cmd == "script":
         run_script(args)
     elif cmd == ":":
         pass # comment
-    elif cmd == "#s":
-        print(len(selection))
+    elif cmd == "#l":
+        r = parse_range(args)
+        code_val = len(r)
+        out(len(r))
         odone()
+    elif cmd == "mm":
+        v = exestr(args, macromode=True)
+        out(macro_val_tostr(v))
     elif cmd == "q":
         print("really quit? (y/n) ", end="")
         yn = raw_read().lower()
@@ -334,22 +391,48 @@ def exe(cmd: str, args: str):
         print("unknown")
         odone()
 
+    return code_val
 
-def exestr(args):
+
+def noprint(*args, **kwargs):
+    pass
+
+
+def exestr(args:str, macromode:bool, out=print):
+    if macromode:
+        ind = False
+        oargs = []
+        exeargs = []
+        for c in args:
+            if ind:
+                if c == '}':
+                    ind = False
+                    v = exestr(''.join(exeargs), macromode=True, out=noprint)
+                    oargs.extend(macro_val_tostr(v))
+                else:
+                    exeargs.append(c)
+            else:
+                if c == '{':
+                    ind = True
+                    exeargs = []
+                else:
+                    oargs.append(c)
+        args = ''.join(oargs)
+
     args = args.strip()
     if len(args) == 0:
         return
     args = args.split(" ", 1)
     cmd = args[0]
     args = args[1] if len(args) > 1 else ""
-    exe(cmd,args)
+    return exe(cmd, args, out=out)
 
 
 def run_script(path):
     with open(path, "r") as f:
         for idx, line in enumerate(f):
             try:
-                exestr(line)
+                exestr(line, macromode=False)
             except Exception as e:
                 print(f"in {path}:{line+1}   {e}")
                 raise e
@@ -376,6 +459,6 @@ while True:
     print(config["echo"], end="")
     args = raw_read()
     try:
-        exestr(args)
+        exestr(args, macromode=False)
     except Exception as e:
         print(e)
