@@ -4,6 +4,7 @@ import sys
 from itertools import chain
 import weakref
 import sys
+import re
 
 buffers = []
 config = {
@@ -257,6 +258,14 @@ def exe(cmd: str, args: str, out=print):
             selection = select_buf(int(args) - 1)
             out(selection)
         code_val = selection.buf
+    elif cmd == "rs":
+        macroname, regx = args.split(" ", 1)
+        for linenum, line in selection:
+            for match in re.finditer(regex, line):
+                args = list(match.groups())
+                args.insert(0, match.group(0))
+                args.insert(0, linenum)
+                run_macro(macroname, args)
     elif cmd == "cfg":
         if len(args) == 0:
             table("ll", ((k, "'"+v+"'") for k,v in config.items()), out=out)
@@ -316,18 +325,23 @@ def exe(cmd: str, args: str, out=print):
                           last + num,
                           selection.buf)
     elif any(cmd.startswith(x) for x in ["p", "a", "e"]):
+        inplen = len(cmd)
         flags = cmd[1:]
         cmd = cmd[0:1]
 
         r = selection
         if 's' in flags:
             vli = args.split(" ", 1)
+            inplen += 1
+            inplen += len(vli[0])
             r = parse_range(vli[0])
             args = vli[1] if len(vli) > 1 else ""
 
         src_range = None
         if 'b' in flags:
             vli = args.split(" ", 1)
+            inplen += 1
+            inplen += len(vli[0])
             src_range = parse_range(vli[0])
             args = vli[1] if len(vli) > 1 else ""
 
@@ -348,7 +362,10 @@ def exe(cmd: str, args: str, out=print):
         if src_range is None:
             lines.append(args)
             while True:
-                out(config["echo"] + ".", end="")
+                out(config["echo"], end="")
+                for i in range(inplen - 1):
+                    out(" ", end="")
+                out(".", end="")
                 ln = input()
                 if len(ln) == 0:
                     break

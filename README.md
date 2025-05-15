@@ -254,3 +254,4 @@ for all commands, the selection will be changed to contain the previous selectio
 - `rs`: regex search: call a macro with the values of all capture groups for all matches in the selection
 - `rr`: regex replace: call a macro with the values of all capture groups that returns the new replace string for a specified capture group for all matches in the selection
 - `!` flag to `a`/`e`/`p`: use the remaining arguments as shell command to execute, and use input text selection (via `b` flag) as stdin if set, and then insert stdout of shell command
+- get indent, set indent, multiply indent by, divide indent, get indents, get gcd of indents
